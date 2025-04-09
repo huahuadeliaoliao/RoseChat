@@ -1,0 +1,18 @@
+# chat server address
+upstream_addr = "backend-prod:8000"
+
+# pingora server address
+listen_addr = "[::]:8713"
+
+# log level
+log_level = "info"
+
+# The default time for Docker to force shutdown is 10 seconds, 
+# the sum of the time for these two options should be less than 10s to work properly.
+
+# grace period in seconds before starting the final step of 
+# the graceful shutdown after signaling shutdown.
+grace_period_seconds = 1
+
+# timeout in seconds of the final step for the graceful shutdown.
+graceful_shutdown_timeout_seconds = 1

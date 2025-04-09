@@ -1,0 +1,21 @@
+[package]
+name = "proxy"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+lto = "fat"
+
+[dependencies]
+log = "0.4"
+clap = "4"
+http = "1"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+pingora = { version = "0.4", features = ["proxy"] }
+env_logger = "0.11"
+async-trait = "0.1"
+
+# See https://github.com/cloudflare/pingora/issues/568
+[patch.crates-io]
+sfv = { git = "https://github.com/undef1nd/sfv.git", tag = "v0.9.4" }
