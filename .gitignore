@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Environment variables file
+.env
+
+# OS generated files
+.DS_Store
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Rust
+target/
