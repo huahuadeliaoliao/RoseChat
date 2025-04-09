@@ -1,0 +1,69 @@
+services:
+  db:
+    profiles: ["dev", "prod"]
+    image: postgres:16
+    container_name: pg
+    environment:
+      POSTGRES_USER: chatuser
+      POSTGRES_PASSWORD: chatpassword
+      POSTGRES_DB: chatdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatuser -d chatdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+  backend-dev:
+    profiles: ["dev"]
+    container_name: chat_backend
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://chatuser:chatpassword@db:5432/chatdb
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - MODEL_NAME=${MODEL_NAME}
+      - TEMPERATURE=${TEMPERATURE}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    command: ["tail", "-f", "/dev/null"]
+
+  backend-prod:
+    profiles: ["prod"]
+    container_name: chat_backend
+    build: ./backend
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL}
+      - DATABASE_URL=postgresql://chatuser:chatpassword@db:5432/chatdb
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - MODEL_NAME=${MODEL_NAME}
+      - TEMPERATURE=${TEMPERATURE}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+  
+  proxy:
+    profiles: ["prod"]
+    container_name: proxy
+    build: ./proxy
+    volumes:
+      - ./proxy/config.toml:/proxy/config.toml
+    ports:
+      - "8713:8713"
+    restart: always
+
+volumes:
+  postgres_data:

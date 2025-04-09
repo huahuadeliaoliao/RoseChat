@@ -1,0 +1,14 @@
+# Dockerfile itself
+Dockerfile
+
+# Python cache files
+app/__pycache__/
+__pycache__/
+**/*.pyc
+
+# OS generated files
+.DS_Store
+
+# IDE files
+.idea/
+.vscode/
