@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 from typing import List, AsyncGenerator
 from uuid import uuid4
@@ -36,7 +36,9 @@ async def chat_stream(
         async def stream_generator() -> AsyncGenerator[str, None]:
             try:
                 async for chunk in chat_service.stream_message(
-                    content=request_body.content, thread_id=thread_id_to_use
+                    content=request_body.content,
+                    thread_id=thread_id_to_use,
+                    include_reasoning=request_body.include_reasoning,
                 ):
                     yield chunk
             except Exception as e:
@@ -62,14 +64,20 @@ async def chat_stream(
 
 
 @router.get("/history/{thread_id}", response_model=ChatHistoryResponse)
-async def get_history(thread_id: str, request: Request):
+async def get_history(
+    thread_id: str,
+    request: Request,
+    include_reasoning: bool = Query(
+        False, description="Include model reasoning history"
+    ),
+):
     try:
         chat_service = getattr(request.app.state, "chat_service", None)
         if not chat_service:
             logger.error("Chat service not found in application state.")
             raise HTTPException(status_code=503, detail="Chat service is not available")
 
-        history = await chat_service.get_history(thread_id)
+        history = await chat_service.get_history(thread_id, include_reasoning)
 
         if (
             not isinstance(history, dict)

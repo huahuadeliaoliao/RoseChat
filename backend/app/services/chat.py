@@ -2,7 +2,7 @@ import logging
 import json
 from typing import Dict, List, Any, Optional, AsyncGenerator
 
-from langchain_openai import ChatOpenAI
+from app.services.custom_openai import ChatOpenAIWithReasoning
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, AIMessageChunk
 from langgraph.graph import StateGraph, START
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -37,11 +37,12 @@ class ChatService:
     def _init_chat_agent(self) -> Optional[Any]:
         try:
             logger.info("Initializing chat model...")
-            chat_model = ChatOpenAI(
+            chat_model = ChatOpenAIWithReasoning(
                 model=settings.model_name,
                 temperature=settings.temperature,
                 api_key=settings.openai_api_key,
                 base_url=settings.openai_base_url,
+                streaming=True,
             )
 
             logger.info("Initializing StateGraph...")
@@ -110,6 +111,33 @@ class ChatService:
                         "input_content": None,
                     }
 
+                    reasoning_content = None
+                    if (
+                        hasattr(response, "additional_kwargs")
+                        and "reasoning_content" in response.additional_kwargs
+                    ):
+                        reasoning_content = response.additional_kwargs.get(
+                            "reasoning_content"
+                        )
+                        if reasoning_content:
+                            query_for_reasoning = (
+                                new_content
+                                if new_content is not None
+                                else (
+                                    history[-1].content
+                                    if history and isinstance(history[-1], HumanMessage)
+                                    else "N/A"
+                                )
+                            )
+                            reasoning_entry = {
+                                "query": query_for_reasoning,
+                                "reasoning": reasoning_content,
+                            }
+                            update["reasoning_history"] = [reasoning_entry]
+                            logger.info(
+                                f"Captured reasoning content of length: {len(reasoning_content)}"
+                            )
+
                     logger.info("--- Agent Node Finish ---")
                     return update
                 except Exception as node_exc:
@@ -133,7 +161,10 @@ class ChatService:
             return None
 
     async def stream_message(
-        self, content: str, thread_id: Optional[str] = None
+        self,
+        content: str,
+        thread_id: Optional[str] = None,
+        include_reasoning: bool = False,
     ) -> AsyncGenerator[str, None]:
         if not self.chat_agent:
             logger.error("Chat agent is not initialized for streaming.")
@@ -158,14 +189,27 @@ class ChatService:
             extra={"thread_id": thread_id},
         )
 
+        current_reasoning_chunk = ""
+
         try:
             async for event in self.chat_agent.astream(
                 input_payload, config, stream_mode="messages"
             ):
                 if isinstance(event, tuple) and len(event) > 0:
                     chunk = event[0]
-                    if isinstance(chunk, AIMessageChunk) and chunk.content:
-                        yield f"data: {json.dumps({'type': 'content', 'content': chunk.content}, ensure_ascii=False)}\n\n"
+                    if isinstance(chunk, AIMessageChunk):
+                        if (
+                            hasattr(chunk, "additional_kwargs")
+                            and "reasoning_content" in chunk.additional_kwargs
+                        ):
+                            current_reasoning_chunk = chunk.additional_kwargs.get(
+                                "reasoning_content", ""
+                            )
+                            if current_reasoning_chunk and include_reasoning:
+                                yield f"data: {json.dumps({'type': 'reasoning', 'content': current_reasoning_chunk}, ensure_ascii=False)}\n\n"
+
+                        if chunk.content:
+                            yield f"data: {json.dumps({'type': 'content', 'content': chunk.content}, ensure_ascii=False)}\n\n"
 
             final_state = await self.chat_agent.aget_state(config)
             final_thread_id = "unknown"  # Default value
@@ -203,7 +247,9 @@ class ChatService:
             error_message = f"An error occurred: {type(e).__name__}"
             yield f"event: error\ndata: {json.dumps({'error': error_message}, ensure_ascii=False)}\n\n"
 
-    async def get_history(self, thread_id: str) -> Dict[str, Any]:
+    async def get_history(
+        self, thread_id: str, include_reasoning: bool = False
+    ) -> Dict[str, Any]:
         if not self.chat_agent:
             logger.error(
                 "Chat agent is not initialized.", extra={"thread_id": thread_id}
@@ -231,16 +277,16 @@ class ChatService:
         )
         try:
             state_snapshot = await self.chat_agent.aget_state(config)
-            if (
-                not state_snapshot
-                or not state_snapshot.values
-                or "messages" not in state_snapshot.values
-            ):
+            if not state_snapshot or not state_snapshot.values:
                 logger.warning(
-                    f"No state or messages found for thread_id: {thread_id}",
+                    f"No state found for thread_id: {thread_id}",
                     extra={"thread_id": thread_id},
                 )
-                return {"thread_id": thread_id, "messages": []}
+                return {
+                    "thread_id": thread_id,
+                    "messages": [],
+                    "reasoning_history": [] if include_reasoning else None,
+                }
 
             logger.info(
                 f"State retrieved successfully for thread_id: {thread_id}",
@@ -264,7 +310,14 @@ class ChatService:
                         extra={"thread_id": thread_id, "message_type": str(type(msg))},
                     )
 
-            return {"thread_id": thread_id, "messages": messages}
+            result = {"thread_id": thread_id, "messages": messages}
+
+            if include_reasoning:
+                result["reasoning_history"] = state_snapshot.values.get(
+                    "reasoning_history", []
+                )
+
+            return result
         except Exception as e:
             logger.error(
                 f"Error getting history for thread_id {thread_id}: {e}",
@@ -284,7 +337,11 @@ class ChatService:
                     f"No checkpoint found for thread_id {thread_id} during get_history.",
                     extra={"thread_id": thread_id},
                 )
-                return {"thread_id": thread_id, "messages": []}
+                return {
+                    "thread_id": thread_id,
+                    "messages": [],
+                    "reasoning_history": [] if include_reasoning else None,
+                }
             raise
 
     async def list_threads(self) -> List[str]:
