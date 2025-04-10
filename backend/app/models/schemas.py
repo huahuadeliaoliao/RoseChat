@@ -11,12 +11,6 @@ class MessageRequest(BaseModel):
     include_reasoning: bool = False
 
 
-class MessageResponse(BaseModel):
-    thread_id: str
-    message: str
-    reasoning: Optional[str] = None
-
-
 class ChatHistoryResponse(BaseModel):
     thread_id: str
     messages: List[Dict[str, Any]]
@@ -45,3 +39,5 @@ class AgentState(TypedDict):
     reasoning_history: Annotated[
         Optional[List[Dict[str, str]]], reduce_reasoning_history
     ] = None
+
+    remaining_steps: Optional[int] = None

@@ -1,9 +1,11 @@
-from fastapi import APIRouter, HTTPException, Request, Query
+import asyncio
+from fastapi import APIRouter, HTTPException, Request, Query, status
 from fastapi.responses import StreamingResponse
 from typing import List, AsyncGenerator
 from uuid import uuid4
 import logging
 import json
+from starlette.background import BackgroundTask
 
 from app.models.schemas import (
     MessageRequest,
@@ -33,14 +35,32 @@ async def chat_stream(
         thread_id_to_use = thread_id_input or str(uuid4())
         logger.info(f"Initiating stream for thread_id: {thread_id_to_use}")
 
+        disconnect_event = asyncio.Event()
+        stream_task = None
+
         async def stream_generator() -> AsyncGenerator[str, None]:
+            nonlocal stream_task
+
             try:
-                async for chunk in chat_service.stream_message(
+                stream_gen = chat_service.stream_message(
                     content=request_body.content,
                     thread_id=thread_id_to_use,
                     include_reasoning=request_body.include_reasoning,
-                ):
+                )
+
+                async for chunk in stream_gen:
+                    if disconnect_event.is_set():
+                        logger.info(
+                            f"Detected disconnect, breaking stream for thread_id: {thread_id_to_use}"
+                        )
+                        break
+
                     yield chunk
+
+            except asyncio.CancelledError:
+                logger.info(
+                    f"Stream generator cancelled for thread_id: {thread_id_to_use}"
+                )
             except Exception as e:
                 logger.error(
                     f"Error during response streaming for thread {thread_id_to_use}: {e}",
@@ -50,8 +70,27 @@ async def chat_stream(
                     {"error": f"Stream failed: {type(e).__name__}"}
                 )
                 yield f"event: error\ndata: {error_payload}\n\n"
+            finally:
+                logger.info(
+                    f"Stream generator completed for thread_id: {thread_id_to_use}"
+                )
 
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        async def on_disconnect():
+            logger.info(
+                f"Client disconnected from stream for thread_id: {thread_id_to_use}"
+            )
+            disconnect_event.set()
+
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream",
+            background=BackgroundTask(on_disconnect),
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     except ValueError as ve:
         logger.warning(f"Value error setting up chat stream: {ve}")
