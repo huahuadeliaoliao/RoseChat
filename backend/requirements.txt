@@ -1,11 +1,12 @@
-fastapi==0.104.0
-uvicorn==0.23.2
+fastapi==0.115.12
+uvicorn==0.34.0
 langchain==0.3.23
 langchain-openai==0.3.12
 langchain-postgres==0.0.14
+langchain-mcp-adapters==0.0.7
 langgraph-checkpoint-postgres==2.0.19
 langgraph==0.3.25
-pydantic>=2.4.2
-pydantic-settings>=2.0.3
-python-dotenv==1.0.0
+pydantic==2.11.3
+pydantic-settings==2.8.1
+python-dotenv==1.1.0
 psycopg[c,pool]==3.2.6
