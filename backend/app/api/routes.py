@@ -1,5 +1,6 @@
 import asyncio
 from fastapi import APIRouter, HTTPException, Request, Query, status
+from app.config import settings
 from fastapi.responses import StreamingResponse
 from typing import List, AsyncGenerator
 from uuid import uuid4
@@ -154,6 +155,20 @@ async def list_threads_endpoint(request: Request):
     except Exception:
         logger.exception("Error in list_threads endpoint")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/current_model")
+async def get_current_model():
+    try:
+        model_name = settings.model_name
+        if not model_name:
+            raise HTTPException(status_code=404, detail="Model name not configured")
+        return {"model_name": model_name}
+    except Exception as e:
+        logger.error(f"Error retrieving current model name: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Internal server error retrieving model name"
+        )
 
 
 @router.get("/health")
