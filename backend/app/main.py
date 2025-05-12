@@ -1,3 +1,5 @@
+"""Main FastAPI application setup and entry point."""
+
 import logging
 import json
 import sys
@@ -6,10 +8,14 @@ from contextlib import (
     AbstractAsyncContextManager,
     AsyncExitStack,
 )
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, Any, Dict
 import datetime
+import uvicorn
+from uvicorn.config import (
+    LOGGING_CONFIG as UVICORN_LOGGING_CONFIG,
+)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
@@ -20,7 +26,8 @@ try:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 except ImportError:
     raise ImportError(
-        "Critical: AsyncPostgresSaver not found. Check langgraph-checkpoint-postgres version and installation."
+        "Critical dependency 'langgraph-checkpoint-postgres' not found or AsyncPostgresSaver cannot be imported. "
+        "Please install it: pip install langgraph-checkpoint-postgres"
     ) from None
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -29,17 +36,21 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 class JsonFormatter(logging.Formatter):
-    def format(self, record):
-        log_record = {
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+    """Formats log records into JSON strings."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format the specified record as text."""
+        log_record: Dict[str, Any] = {
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "level": record.levelname,
             "name": record.name,
             "message": record.getMessage(),
         }
-        if hasattr(record, "exc_info") and record.exc_info:
+        if record.exc_info:
             log_record["exception"] = self.formatException(record.exc_info)
-        if hasattr(record, "stack_info") and record.stack_info:
+        if record.stack_info:
             log_record["stack_info"] = self.formatStack(record.stack_info)
+
         standard_keys = {
             "name",
             "msg",
@@ -69,9 +80,13 @@ class JsonFormatter(logging.Formatter):
         }
         if hasattr(record, "__dict__"):
             for key, value in record.__dict__.items():
-                if key not in standard_keys:
+                if key not in standard_keys and key not in log_record:
                     log_record[key] = value
-        return json.dumps(log_record, ensure_ascii=False)
+
+        try:
+            return json.dumps(log_record, ensure_ascii=False, default=str)
+        except Exception:
+            return super().format(record)
 
 
 log_handler = logging.StreamHandler(sys.stdout)
@@ -86,6 +101,7 @@ root_logger.setLevel(settings.log_level)
 logging.getLogger("uvicorn").propagate = False
 logging.getLogger("uvicorn.access").propagate = False
 logging.getLogger("uvicorn.error").propagate = False
+
 logging.getLogger("uvicorn").setLevel(settings.log_level)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.error").setLevel(settings.log_level)
@@ -96,6 +112,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Manage application lifespan events (startup and shutdown)."""
     logger.info("Application startup: Initializing resources...")
     async with AsyncExitStack() as stack:
         db_pool: Optional[AsyncConnectionPool] = None
@@ -156,6 +173,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             logger.info("Initializing ChatService...")
             try:
+                if not checkpointer:
+                    raise RuntimeError("Checkpointer was not initialized.")
+                if not db_pool:
+                    raise RuntimeError("Database pool was not initialized.")
+
                 chat_service_instance = ChatService(
                     checkpointer=checkpointer,
                     db_pool=db_pool,
@@ -178,11 +200,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 f"Application startup failed: {startup_error}", exc_info=True
             )
             raise RuntimeError("Application startup failed") from startup_error
-
-        logger.info(
-            "Application shutdown: Cleaning up resources managed by AsyncExitStack..."
-        )
-    logger.info("Lifespan ended.")
+        finally:
+            logger.info(
+                "Application shutdown: Cleaning up resources managed by AsyncExitStack..."
+            )
+    logger.info("Lifespan context manager finished.")
 
 
 app = FastAPI(title=settings.api_title, version=settings.api_version, lifespan=lifespan)
@@ -191,17 +213,32 @@ app.include_router(router, prefix="/api")
 
 
 @app.get("/")
-async def read_root():
+async def read_root(
+    request: Request,
+):
+    """Provide a simple root endpoint indicating the service is running."""
     return {"message": f"{settings.api_title} is running"}
 
 
 if __name__ == "__main__":
-    import uvicorn
+    log_config = UVICORN_LOGGING_CONFIG.copy()
 
-    log_config = uvicorn.config.LOGGING_CONFIG
-    log_config["loggers"]["uvicorn"]["level"] = settings.log_level
-    log_config["loggers"]["uvicorn.error"]["level"] = settings.log_level
-    log_config["loggers"]["uvicorn.access"]["level"] = "WARNING"
+    if "formatters" in log_config and "default" in log_config["formatters"]:
+        log_config["formatters"]["default"]["fmt"] = "%(levelprefix)s %(message)s"
+        log_config["formatters"]["default"]["use_colors"] = True
+    if "formatters" in log_config and "access" in log_config["formatters"]:
+        log_config["formatters"]["access"]["fmt"] = (
+            '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+        )
+        log_config["formatters"]["access"]["use_colors"] = True
+
+    if "loggers" in log_config:
+        if "uvicorn" in log_config["loggers"]:
+            log_config["loggers"]["uvicorn"]["level"] = settings.log_level
+        if "uvicorn.error" in log_config["loggers"]:
+            log_config["loggers"]["uvicorn.error"]["level"] = settings.log_level
+        if "uvicorn.access" in log_config["loggers"]:
+            log_config["loggers"]["uvicorn.access"]["level"] = logging.WARNING
 
     logger.info(
         f"Starting Uvicorn server on host=0.0.0.0, port=8000 with log level={settings.log_level}"

@@ -1,0 +1,19 @@
+[tool.pyright]
+include = ["app"]
+exclude = [
+  "**/__pycache__",
+  "**/.*",
+  "**/tests/**",
+  "**/build/**",
+  "**/dist/**",
+  "**/docs/**",
+  "venv/",
+  ".venv/",
+]
+pythonVersion = "3.13"
+pythonPlatform = "Linux"
+typeCheckingMode = "standard"
+
+[tool.ruff.lint]
+select = ["D"]
+pydocstyle = { convention = "google" }

@@ -1,10 +1,15 @@
+"""Application configuration settings."""
+
 import os
 from pydantic_settings import BaseSettings
 import logging
 import json
+from typing import Dict, Any
 
 
 class Settings(BaseSettings):
+    """Loads and validates application settings from environment or .env file."""
+
     database_url: str = os.getenv(
         "DATABASE_URL", "postgresql://postgres:postgres@db:5432/chatdb"
     )
@@ -24,7 +29,8 @@ class Settings(BaseSettings):
     mcp_servers_config: str = os.getenv("MCP_SERVERS_CONFIG", "")
 
     @property
-    def mcp_servers(self) -> dict:
+    def mcp_servers(self) -> Dict[str, Any]:
+        """Parse the MCP_SERVERS_CONFIG JSON string into a dictionary."""
         try:
             if self.mcp_servers_config and self.mcp_servers_config.strip():
                 return json.loads(self.mcp_servers_config)
@@ -40,8 +46,15 @@ class Settings(BaseSettings):
                 exc_info=False,
             )
             return {}
+        except Exception as e:
+            logging.error(
+                f"Unexpected error parsing MCP_SERVERS_CONFIG: {e}", exc_info=True
+            )
+            return {}
 
     class Config:
+        """Pydantic settings configuration."""
+
         env_file = ".env"
         env_nested_delimiter = "__"
 
